@@ -2,7 +2,9 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <string.h>
+#include <fcntl.h>
 #include <sys/wait.h>
+#include <sys/stat.h>
 #include <stdlib.h>
 
 int parse(int argc, char *argv[], Request *request) {
@@ -36,30 +38,46 @@ int parse(int argc, char *argv[], Request *request) {
     return -1;
 }
 
-// test function
 void send_request(const Request *request, Response *response) {
+    char runner_fifo[256];
     char msg[256];
 
-    memset(response, 0, sizeof(Response));
+    snprintf(runner_fifo, sizeof(runner_fifo), "/tmp/runner_fifo_%d", request->runner_pid);
+
+    if (mkfifo(runner_fifo, 0666) == -1)
+        perror("[runner] failed to create runner FIFO");
+
+    int fd_controller = open(CONTROLLER_FIFO, O_WRONLY);
+    if (fd_controller == -1) {
+        char err[] = "[runner] error: no controller found (is it running?)\n";
+        write(STDERR_FILENO, err, strlen(err));
+        unlink(runner_fifo);
+        exit(1);
+    }
+
+    write(fd_controller, request, sizeof(Request));
+    close(fd_controller);
 
     snprintf(msg, sizeof(msg), "[runner] command %d submitted\n", request->runner_pid);
+    write(STDOUT_FILENO, msg, strlen(msg));
 
-    switch(request->op) {
-        // for now, we will only allow execute requests
-        case EXECUTE:
-            response->allowed = 1;
-            break;
-        default:
-            response->allowed = 0;
-            break;
-    }
+    int fd_runner = open(runner_fifo, O_RDONLY);
+    if (fd_runner != -1) {
+        read(fd_runner, response, sizeof(Response));
+        close(fd_runner);
+    } 
+
+    else
+        perror("[runner] failed to open runner FIFO");
+
+    unlink(runner_fifo);
 }
 
 void handle_response(int argc, char *argv[], const Request *request, const Response *response) {
     char msg[256];
     
     if (!response->allowed) {
-        char err[] = "[runner] error: controller has denied the request";
+        char err[] = "[runner] error: controller has denied the request\n";
         write(STDERR_FILENO, err, strlen(err));
         return;
     }
