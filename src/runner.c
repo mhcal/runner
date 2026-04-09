@@ -1,4 +1,5 @@
 #include "types.h"
+#include "utils.h"
 #include <stdio.h>
 #include <unistd.h>
 #include <string.h>
@@ -39,18 +40,17 @@ int parse(int argc, char *argv[], Request *request) {
 }
 
 void send_request(const Request *request, Response *response) {
-    char runner_fifo[256];
-    char msg[256];
+    char runner_fifo[CMD_LEN];
+    char msg[CMD_LEN];
 
-    snprintf(runner_fifo, sizeof(runner_fifo), "/tmp/runner_fifo_%d", request->runner_pid);
+    snprintf(runner_fifo, sizeof(runner_fifo), RUNNER_FIFO "_%d", request->runner_pid);
 
     if (mkfifo(runner_fifo, 0666) == -1)
         perror("[runner] failed to create runner FIFO");
 
     int fd_controller = open(CONTROLLER_FIFO, O_WRONLY);
     if (fd_controller == -1) {
-        char err[] = "[runner] error: no controller found (is it running?)\n";
-        write(STDERR_FILENO, err, strlen(err));
+        printerr("[runner] error: no controller found (is it running?)\n");
         unlink(runner_fifo);
         exit(1);
     }
@@ -65,7 +65,7 @@ void send_request(const Request *request, Response *response) {
     if (fd_runner != -1) {
         read(fd_runner, response, sizeof(Response));
         close(fd_runner);
-    } 
+    }
 
     else
         perror("[runner] failed to open runner FIFO");
@@ -75,10 +75,9 @@ void send_request(const Request *request, Response *response) {
 
 void handle_response(int argc, char *argv[], const Request *request, const Response *response) {
     char msg[256];
-    
+
     if (!response->allowed) {
-        char err[] = "[runner] error: controller has denied the request\n";
-        write(STDERR_FILENO, err, strlen(err));
+        printerr("[runner] error: controller has denied the request\n");
         return;
     }
 
@@ -89,8 +88,7 @@ void handle_response(int argc, char *argv[], const Request *request, const Respo
         pid_t pid = fork();
 
         if (pid < 0) {
-            char err[] = "fork failed\n";
-            write(STDERR_FILENO, err, strlen(err));
+            printerr("fork failed\n");
             return;
         }
 
@@ -100,16 +98,15 @@ void handle_response(int argc, char *argv[], const Request *request, const Respo
             for (int i = 3; i < argc; i++) {
                 exec_args[i - 3] = argv[i];
             }
-            exec_args[argc - 3] = NULL; 
-            
+            exec_args[argc - 3] = NULL;
+
             execvp(exec_args[0], exec_args);
-            
+
             // fallback
-            char err[] = "Error executing command\n";
-            write(STDERR_FILENO, err, strlen(err));
-            _exit(1); 
-        } 
-        
+            printerr("Error executing command\n");
+            exit(1);
+        }
+
         // parent
         int status;
         waitpid(pid, &status, 0);
@@ -121,8 +118,7 @@ void handle_response(int argc, char *argv[], const Request *request, const Respo
 int main(int argc, char *argv[]) {
     Request request;
     if (parse(argc, argv, &request) == -1) {
-        char err[] = "Error. Usage: ./runner -e [user-id] [command] [args] | -c | -s\n";
-        write(STDERR_FILENO, err, strlen(err));
+        printerr("Error. Usage: ./runner -e [user-id] [command] [args] | -c | -s\n");
         return 1;
     }
 
