@@ -1,4 +1,5 @@
 #include "types.h"
+#include "utils.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -7,8 +8,8 @@
 #include <string.h>
 
 void send_response(pid_t runner_pid, Response *response) {
-    char runner_fifo[256];
-    snprintf(runner_fifo, sizeof(runner_fifo), "/tmp/runner_fifo_%d", runner_pid);
+    char runner_fifo[CMD_LEN];
+    snprintf(runner_fifo, sizeof(runner_fifo), RUNNER_FIFO "_%d", runner_pid);
 
     int fd = open(runner_fifo, O_WRONLY);
     if (fd == -1)
@@ -69,8 +70,7 @@ int handle_request(const Request *request) {
 
 int main(int argc, char *argv[]) {
     if (argc != 3) {
-        char err[] = "Error. Usage: ./controller [parallel-commands] [sched-policy]\n";
-        write(STDERR_FILENO, err, strlen(err));
+        printerr("Error. Usage: ./controller [parallel-commands] [sched-policy]\n");
         return 1;
     }
 
@@ -98,7 +98,7 @@ int main(int argc, char *argv[]) {
         ssize_t bytes_read = read(fd, &request, sizeof(Request));
         if (bytes_read == sizeof(Request)) {
             running = handle_request(&request);
-        } 
+        }
 
         else if (bytes_read == 0) {
             // nao tenho muita certeza do que fazer aqui; a principio, tentamos reabrir a FIFO (?)
