@@ -39,6 +39,22 @@ int parse(int argc, char *argv[], Request *request) {
     return -1;
 }
 
+void notify_finished(const Request *request) {
+    Request finished;
+    memset(&finished, 0, sizeof(Request));
+    finished.op = FINISHED;
+    finished.user_id = request->user_id;
+    finished.runner_pid = request->runner_pid;
+
+    int fd = open(CONTROLLER_FIFO, O_WRONLY);
+    if (fd != -1) {
+        write(fd, &finished, sizeof(Request));
+        close(fd);
+    } else {
+        perror("[runner] falha ao notificar o controller do termino");
+    }
+}
+
 void send_request(const Request *request, Response *response) {
     char runner_fifo[CMD_LEN];
     char msg[CMD_LEN];
@@ -112,6 +128,8 @@ void handle_response(int argc, char *argv[], const Request *request, const Respo
         waitpid(pid, &status, 0);
         snprintf(msg, sizeof(msg), "[runner] command %d finished\n", request->runner_pid);
         write(STDOUT_FILENO, msg, strlen(msg));
+
+        notify_finished(request);
     }
 }
 

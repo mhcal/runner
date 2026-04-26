@@ -7,7 +7,7 @@
 #define CONTROLLER_FIFO "/tmp/controller_fifo"
 #define RUNNER_FIFO "/tmp/runner_fifo"
 
-typedef enum { EXECUTE, CONSULT, SHUTDOWN } Operation;
+typedef enum { EXECUTE, CONSULT, SHUTDOWN, FINISHED } Operation;
 
 typedef struct {
     Operation op;

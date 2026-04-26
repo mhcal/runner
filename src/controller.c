@@ -20,11 +20,25 @@ void send_response(pid_t runner_pid, Response *response) {
     }
 }
 
+void handle_finished(const Request *request) {
+    if (request->op != FINISHED) return;
+
+    // for testing purposes
+    char msg[256];
+    snprintf(msg, sizeof(msg), "[controller] command with pid %d finished\n", request->runner_pid);
+    write(STDOUT_FILENO, msg, strlen(msg));
+}
+
 void handle_execute(const Request *request, Response *response) {
     if (request->op != EXECUTE) return;
 
     // TODO: verificar numero maximo de processos; implementar politicas de escalonamento
     response->allowed = 1;
+
+    // for testing purposes
+    char msg[256];
+    snprintf(msg, sizeof(msg), "[controller] execute request for command with pid %d approved\n", request->runner_pid);
+    write(STDOUT_FILENO, msg, strlen(msg));
 }
 
 void handle_consult(const Request *request, Response *response) {
@@ -44,6 +58,7 @@ int handle_shutdown(const Request *request, Response *response) {
 
 // retorna 1 para manter o controller ativo, 0 para terminar
 int handle_request(const Request *request) {
+    int need_response = 1;
     Response response;
     memset(&response, 0, sizeof(Response));
     int ret = 1;
@@ -58,13 +73,17 @@ int handle_request(const Request *request) {
         case SHUTDOWN:
             ret = handle_shutdown(request, &response);
             break;
+        case FINISHED:
+            handle_finished(request);
+            need_response = 0;
+            break;
         default:
             response.allowed = 0;
             snprintf(response.status, sizeof(response.status), "?");
             break;
     }
 
-    send_response(request->runner_pid, &response);
+    if (need_response) send_response(request->runner_pid, &response);
     return ret;
 }
 
@@ -78,7 +97,7 @@ int main(int argc, char *argv[]) {
     int max_parallel = atoi(argv[1]);
     char *sched_policy = argv[2];
 
-    unlink(CONTROLLER_FIFO); // fechar pipes de execucoes anterioresponse
+    unlink(CONTROLLER_FIFO); // fechar pipes de execucoes anteriores
 
     if (mkfifo(CONTROLLER_FIFO, 0666) == -1) {
         perror("[controller] failed to create controller FIFO");
