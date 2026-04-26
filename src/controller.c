@@ -1,4 +1,6 @@
 #include "types.h"
+#include "state.h"
+#include "policies.h"
 #include "utils.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -6,6 +8,7 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <string.h>
+#include <glib.h>
 
 void send_response(pid_t runner_pid, Response *response) {
     char runner_fifo[CMD_LEN];
@@ -20,32 +23,90 @@ void send_response(pid_t runner_pid, Response *response) {
     }
 }
 
-void handle_finished(const Request *request) {
+void dispatch(State *state) {
+    while (state->current_running < state->max_parallel && !g_queue_is_empty(state->pending)) {
+        // escolhemos a proxima tarefa usando a politica de escalonamento escolhida
+        GList *node = state->policy(state->pending);
+        if (node == NULL) break;
+
+        // movemos a tarefa escolhida da fila de pendentes para fila de ativos
+        Task *task = (Task *)node->data;
+        g_queue_delete_link(state->pending, node);
+        gettimeofday(&task->start_time, NULL);
+        g_queue_push_tail(state->running, task);
+        state->current_running++;
+
+        // notificamos o runner
+        Response response;
+        memset(&response, 0, sizeof(Response));
+        response.allowed = 1;
+        send_response(task->request.runner_pid, &response);
+        char msg[256];
+        snprintf(msg, sizeof(msg), "[controller] approved execute request for command with pid %d\n", task->request.runner_pid);
+    }
+}
+
+void handle_execute(State *state, const Request *request) {
+    if (request->op != EXECUTE) return;
+
+    // formatamos o pedido na struct da tarefa e colocamos na fila de pendentes
+    Task *task = g_malloc(sizeof(Task));
+    memcpy(&task->request, request, sizeof(Request));
+    gettimeofday(&task->submitted_time, NULL);
+    g_queue_push_tail(state->pending, task);
+
+    // tentamos despachar a proxima tarefa
+    dispatch(state);
+}
+
+void handle_finished(State *state, const Request *request) {
     if (request->op != FINISHED) return;
 
-    // for testing purposes
+    for (GList *node = state->running->head; node != NULL; node = node->next) {
+        Task *task = (Task *)node->data;
+
+        if (task->request.runner_pid == request->runner_pid) {
+            gettimeofday(&task->end_time, NULL);
+
+            // TODO: colocar a tarefa terminada no arquivo persistente
+            // possivelmente computar um novo nivel de prioridade para uma tabela de estatisticas de usuario (mlfq)
+
+            // cleanup
+            g_queue_delete_link(state->running, node);
+            g_free(task);
+            state->current_running--;
+            break;
+        }
+    }
+
     char msg[256];
     snprintf(msg, sizeof(msg), "[controller] command with pid %d finished\n", request->runner_pid);
     write(STDOUT_FILENO, msg, strlen(msg));
+
+    // acabamos de liberar um espaço; tentamos despachar a proxima tarefa
+    dispatch(state);
 }
 
-void handle_execute(const Request *request, Response *response) {
-    if (request->op != EXECUTE) return;
+void handle_consult(State *state, const Request *request, Response *response) {
+    if (request->op != CONSULT) return;
 
-    // TODO: verificar numero maximo de processos; implementar politicas de escalonamento
     response->allowed = 1;
+    memset(response->status, 0, sizeof(response->status));
+    char buffer[256];
 
-    // for testing purposes
-    char msg[256];
-    snprintf(msg, sizeof(msg), "[controller] execute request for command with pid %d approved\n", request->runner_pid);
-    write(STDOUT_FILENO, msg, strlen(msg));
-}
+    strcat(response->status, "---\nExecuting\n");
+    for (GList *node = state->running->head; node != NULL; node = node->next) {
+        Task *task = (Task *)node->data;
+        snprintf(buffer, sizeof(buffer), "user-id %d - command-pid %d\n", task->request.user_id, task->request.runner_pid);
+        strcat(response->status, buffer);
+    }
 
-void handle_consult(const Request *request, Response *response) {
-    if (request->op != EXECUTE) return;
-
-    // TODO: formatar processos que estao a correr em `request->status`
-    response->allowed = 1;
+    strcat(response->status, "---\nScheduled\n");
+    for (GList *node = state->pending->head; node != NULL; node = node->next) {
+        Task *task = (Task *)node->data;
+        snprintf(buffer, sizeof(buffer), "user-id %d - command-pid %d\n", task->request.user_id, task->request.runner_pid);
+        strcat(response->status, buffer);
+    }
 }
 
 int handle_shutdown(const Request *request, Response *response) {
@@ -57,7 +118,7 @@ int handle_shutdown(const Request *request, Response *response) {
 }
 
 // retorna 1 para manter o controller ativo, 0 para terminar
-int handle_request(const Request *request) {
+int handle_request(State *state, const Request *request) {
     int need_response = 1;
     Response response;
     memset(&response, 0, sizeof(Response));
@@ -65,16 +126,17 @@ int handle_request(const Request *request) {
 
     switch(request->op) {
         case EXECUTE:
-            handle_execute(request, &response);
+            handle_execute(state, request);
+            need_response = 0; // dispatch é responsavel por notificar o runner
             break;
         case CONSULT:
-            handle_consult(request, &response);
+            handle_consult(state, request, &response);
             break;
         case SHUTDOWN:
             ret = handle_shutdown(request, &response);
             break;
         case FINISHED:
-            handle_finished(request);
+            handle_finished(state, request);
             need_response = 0;
             break;
         default:
@@ -93,9 +155,19 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    // TODO: provavelmente teremos que criar uma state struct pra guardar e consultar informacao como essa
-    int max_parallel = atoi(argv[1]);
+    State state;
+    state.max_parallel = atoi(argv[1]);
+    state.current_running = 0;
+    state.pending = g_queue_new();
+    state.running = g_queue_new();
+
     char *sched_policy = argv[2];
+    if (strcmp(sched_policy, "fcfs") == 0) {
+        state.policy = fcfs;
+    } else {
+        printerr("Error. Unknown scheduling policy.\n");
+        return 1;
+    }
 
     unlink(CONTROLLER_FIFO); // fechar pipes de execucoes anteriores
 
@@ -116,7 +188,7 @@ int main(int argc, char *argv[]) {
     while (running) {
         ssize_t bytes_read = read(fd, &request, sizeof(Request));
         if (bytes_read == sizeof(Request)) {
-            running = handle_request(&request);
+            running = handle_request(&state, &request);
         }
 
         else if (bytes_read == 0) {
@@ -134,8 +206,11 @@ int main(int argc, char *argv[]) {
             perror("[controller] error reading from FIFO");
     }
 
+    // cleanup
     close(fd);
     unlink(CONTROLLER_FIFO);
+    g_queue_free_full(state.pending, g_free);
+    g_queue_free_full(state.running, g_free);
 
     return 0;
 }
