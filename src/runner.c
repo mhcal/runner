@@ -74,16 +74,19 @@ void send_request(const Request *request, Response *response) {
     write(fd_controller, request, sizeof(Request));
     close(fd_controller);
 
-    snprintf(msg, sizeof(msg), "[runner] command %d submitted\n", request->runner_pid);
-    write(STDOUT_FILENO, msg, strlen(msg));
+    if (request->op == EXECUTE) {
+        snprintf(msg, sizeof(msg), "[runner] command %d submitted\n", request->runner_pid);
+        write(STDOUT_FILENO, msg, strlen(msg));
+    } else if (request->op == SHUTDOWN) {
+        snprintf(msg, sizeof(msg), "[runner] sent shutdown notification\n");
+        write(STDOUT_FILENO, msg, strlen(msg));
+    }
 
     int fd_runner = open(runner_fifo, O_RDONLY);
     if (fd_runner != -1) {
         read(fd_runner, response, sizeof(Response));
         close(fd_runner);
-    }
-
-    else
+    } else
         perror("[runner] failed to open runner FIFO");
 
     unlink(runner_fifo);
@@ -130,6 +133,10 @@ void handle_response(int argc, char *argv[], const Request *request, const Respo
         write(STDOUT_FILENO, msg, strlen(msg));
 
         notify_finished(request);
+    }
+
+    else if (request->op == CONSULT) {
+        write(STDOUT_FILENO, response->status, strlen(response->status));
     }
 }
 
