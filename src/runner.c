@@ -96,7 +96,8 @@ void handle_response(int argc, char *argv[], const Request *request, const Respo
     char msg[256];
 
     if (!response->allowed) {
-        printerr("[runner] error: controller has denied the request\n");
+        printerr("[runner] error: controller has denied the request - ");
+        printerr(response->status);
         return;
     }
 

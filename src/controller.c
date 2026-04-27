@@ -4,6 +4,7 @@
 #include "utils.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdbool.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/stat.h>
@@ -41,8 +42,10 @@ void dispatch(State *state) {
         memset(&response, 0, sizeof(Response));
         response.allowed = 1;
         send_response(task->request.runner_pid, &response);
+
         char msg[256];
         snprintf(msg, sizeof(msg), "[controller] approved execute request for command with pid %d\n", task->request.runner_pid);
+        write(STDOUT_FILENO, msg, strlen(msg));
     }
 }
 
@@ -90,7 +93,7 @@ void handle_finished(State *state, const Request *request) {
 void handle_consult(State *state, const Request *request, Response *response) {
     if (request->op != CONSULT) return;
 
-    response->allowed = 1;
+    response->allowed = true;
     memset(response->status, 0, sizeof(response->status));
     char buffer[256];
 
@@ -109,31 +112,38 @@ void handle_consult(State *state, const Request *request, Response *response) {
     }
 }
 
-int handle_shutdown(const Request *request, Response *response) {
-    if (request->op != SHUTDOWN) return 1;
+void handle_shutdown(State *state, const Request *request, Response *response) {
+    if (request->op != SHUTDOWN) return;
 
-    // TODO: esperar que processos atuais terminem (por enquanto apenas paramos o loop do controller)
-    response->allowed = 1;
-    return 0;
+    state->on = false;
+    response->allowed = true;
+
+    char msg[256];
+    snprintf(msg, sizeof(msg), "[controller] shutdown request from %d approved\n", request->runner_pid);
+    write(STDOUT_FILENO, msg, strlen(msg));
 }
 
 // retorna 1 para manter o controller ativo, 0 para terminar
-int handle_request(State *state, const Request *request) {
+void handle_request(State *state, const Request *request) {
     int need_response = 1;
     Response response;
     memset(&response, 0, sizeof(Response));
-    int ret = 1;
 
     switch(request->op) {
         case EXECUTE:
-            handle_execute(state, request);
-            need_response = 0; // dispatch é responsavel por notificar o runner
+            if (state->on) {
+                handle_execute(state, request);
+                need_response = 0; // dispatch é responsavel por notificar o runner
+            } else {
+                response.allowed = false;
+                snprintf(response.status, sizeof(response.status), "Controller is shutting down\n");
+            }
             break;
         case CONSULT:
             handle_consult(state, request, &response);
             break;
         case SHUTDOWN:
-            ret = handle_shutdown(request, &response);
+            handle_shutdown(state, request, &response);
             break;
         case FINISHED:
             handle_finished(state, request);
@@ -141,12 +151,11 @@ int handle_request(State *state, const Request *request) {
             break;
         default:
             response.allowed = 0;
-            snprintf(response.status, sizeof(response.status), "?");
+            snprintf(response.status, sizeof(response.status), "Unrecognized operation\n");
             break;
     }
 
     if (need_response) send_response(request->runner_pid, &response);
-    return ret;
 }
 
 int main(int argc, char *argv[]) {
@@ -156,6 +165,7 @@ int main(int argc, char *argv[]) {
     }
 
     State state;
+    state.on = true;
     state.max_parallel = atoi(argv[1]);
     state.current_running = 0;
     state.pending = g_queue_new();
@@ -183,17 +193,17 @@ int main(int argc, char *argv[]) {
     }
 
     Request request;
-    int running = 1;
 
-    while (running) {
+    while (state.on || state.current_running > 0 || !g_queue_is_empty(state.pending)) {
         ssize_t bytes_read = read(fd, &request, sizeof(Request));
+
         if (bytes_read == sizeof(Request)) {
-            running = handle_request(&state, &request);
+            handle_request(&state, &request);
         }
 
         else if (bytes_read == 0) {
-            // nao tenho muita certeza do que fazer aqui; a principio, tentamos reabrir a FIFO (?)
             close(fd);
+            if (!state.on && state.current_running == 0 && g_queue_is_empty(state.pending)) break;
 
             fd = open(CONTROLLER_FIFO, O_RDONLY);
             if (fd == -1) {
@@ -202,8 +212,7 @@ int main(int argc, char *argv[]) {
             }
         }
 
-        else
-            perror("[controller] error reading from FIFO");
+        else perror("[controller] error reading from FIFO;");
     }
 
     // cleanup

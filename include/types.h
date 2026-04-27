@@ -2,6 +2,7 @@
 #define TYPES_H
 
 #include <sys/types.h>
+#include <stdbool.h>
 
 #define CMD_LEN 256
 #define CONTROLLER_FIFO "/tmp/controller_fifo"
@@ -17,7 +18,7 @@ typedef struct {
 } Request;
 
 typedef struct {
-    int allowed;
+    bool allowed;
     char status[1024];
 } Response;
 

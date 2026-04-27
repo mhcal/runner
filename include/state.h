@@ -4,6 +4,7 @@
 #include "types.h"
 #include <glib.h>
 #include <sys/time.h>
+#include <stdbool.h>
 
 typedef struct {
     Request request;
@@ -15,6 +16,7 @@ typedef struct {
 typedef GList* (*PolicyFunction)(GQueue *pending);
 
 typedef struct {
+    bool on;
     int max_parallel;
     int current_running;
     GQueue *pending;
