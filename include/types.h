@@ -4,11 +4,17 @@
 #include <sys/types.h>
 #include <stdbool.h>
 
+#define BUF_LEN 256
+#define STATUS_LEN 1024
+
 #define MAX_CMDS 16
 #define MAX_ARGS 64
 
+#define FIFO_PERMS 0666
+#define FILE_PERMS 0644
+
 #define CONTROLLER_FIFO "/tmp/controller_fifo"
-#define RUNNER_FIFO "/tmp/runner_fifo"
+#define RUNNER_FIFO "/tmp/runner_fifo_%d"
 
 typedef enum { EXECUTE, CONSULT, SHUTDOWN, FINISHED } Operation;
 

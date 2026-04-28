@@ -2,8 +2,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
+#include <unistd.h>
 #include "types.h"
-#include "utils.h"
 
 void strip_quotes(char *str) {
     if (strlen(str) < 2) return;
@@ -45,6 +45,7 @@ char* get_next_token(char **str_ptr) {
 bool parse_command(char *str, Command *cmd) {
     memset(cmd, 0, sizeof(Command));
     int idx = 0;
+    char msg[BUF_LEN];
 
     char *token = get_next_token(&str);
     if (!token) return false;
@@ -53,7 +54,8 @@ bool parse_command(char *str, Command *cmd) {
         if (strcmp(token, "<") == 0) {
             cmd->in = get_next_token(&str);
             if (!cmd->in) {
-                printerr("Syntax error: missing input file for '<'.\n");
+                snprintf(msg, sizeof(msg), "Syntax error: missing input file for '<'.\n");
+                (void)write(STDERR_FILENO, msg, strlen(msg));
                 return false;
             }
             strip_quotes(cmd->in);
@@ -61,7 +63,8 @@ bool parse_command(char *str, Command *cmd) {
             cmd->out = get_next_token(&str);
             cmd->append = false;
             if (!cmd->out) {
-                printerr("Syntax error: missing output file for '>'.\n");
+                snprintf(msg, sizeof(msg), "Syntax error: missing output file for '>'.\n");
+                (void)write(STDERR_FILENO, msg, strlen(msg));
                 return false;
             }
             strip_quotes(cmd->out);
@@ -69,20 +72,23 @@ bool parse_command(char *str, Command *cmd) {
             cmd->out = get_next_token(&str);
             cmd->append = true;
             if (!cmd->out) {
-                printerr("Syntax error: missing output file for '>>'.\n");
+                snprintf(msg, sizeof(msg), "Syntax error: missing output file for '>>'.\n");
+                (void)write(STDERR_FILENO, msg, strlen(msg));
                 return false;
             }
             strip_quotes(cmd->out);
         } else if (strcmp(token, "2>") == 0) {
             cmd->err = get_next_token(&str);
             if (!cmd->out) {
-                printerr("Syntax error: missing output file for '2>'.\n");
+                snprintf(msg, sizeof(msg), "Syntax error: missing output file for '2>'.\n");
+                (void)write(STDERR_FILENO, msg, strlen(msg));
                 return false;
             }
             strip_quotes(cmd->err);
         } else {
             if (idx > MAX_ARGS) {
-                printerr("Syntax error: too many arguments.\n");
+                snprintf(msg, sizeof(msg), "Syntax error: too many arguments.\n");
+                (void)write(STDERR_FILENO, msg, strlen(msg));
                 return false;
             }
             strip_quotes(token);
@@ -95,7 +101,8 @@ bool parse_command(char *str, Command *cmd) {
     cmd->args[idx] = NULL;
 
     if (idx == 0) {
-        printerr("Syntax error: redirection without a command.\n");
+        snprintf(msg, sizeof(msg), "Syntax error: redirection without a command.\n");
+        (void)write(STDERR_FILENO, msg, strlen(msg));
         return false;
     }
 
@@ -106,6 +113,7 @@ bool parse_pipeline(char *str, Pipeline *pipeline) {
     pipeline->num_cmds = 0;
     bool inside_quote = false;
     char *start = str;
+    char msg[BUF_LEN];
 
     for (int i = 0; str[i] != '\0'; i++) {
         if (str[i] == '\"') inside_quote = !inside_quote;
@@ -114,13 +122,15 @@ bool parse_pipeline(char *str, Pipeline *pipeline) {
             str[i] = '\0';
 
             if (!parse_command(start, &pipeline->cmd[pipeline->num_cmds])) {
-                printerr("Syntax error: invalid or empty command near pipe.\n");
+                snprintf(msg, sizeof(msg), "Syntax error: invalid or empty command near pipe.\n");
+                (void)write(STDERR_FILENO, msg, strlen(msg));
                 return false;
             }
 
             pipeline->num_cmds++;
             if (pipeline->num_cmds >= MAX_CMDS) {
-                printerr("Syntax error: exceeded maximum number of commands.\n");
+                snprintf(msg, sizeof(msg), "Syntax error: exceeded maximum number of commands.\n");
+                (void)write(STDERR_FILENO, msg, strlen(msg));
                 return false;
             }
 
@@ -129,12 +139,14 @@ bool parse_pipeline(char *str, Pipeline *pipeline) {
     }
 
     if (inside_quote) {
-        printerr("Syntax error: unmatched quotes.\n");
+        snprintf(msg, sizeof(msg), "Syntax error: unmatched quotes.\n");
+        (void)write(STDERR_FILENO, msg, strlen(msg));
         return false;
     }
 
     if (!parse_command(start, &pipeline->cmd[pipeline->num_cmds])) {
-        printerr("Syntax error: invalid command (are there trailing pipes?).\n");
+        snprintf(msg, sizeof(msg), "Syntax error: invalid command (are there trailing pipes?).\n");
+        (void)write(STDERR_FILENO, msg, strlen(msg));
         return false;
     }
 

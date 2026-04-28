@@ -1,7 +1,6 @@
 #include "types.h"
 #include "state.h"
 #include "policies.h"
-#include "utils.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
@@ -12,14 +11,14 @@
 #include <glib.h>
 
 void send_response(pid_t runner_pid, Response *response) {
-    char runner_fifo[256];
-    snprintf(runner_fifo, sizeof(runner_fifo), RUNNER_FIFO "_%d", runner_pid);
+    char runner_fifo[BUF_LEN];
+    snprintf(runner_fifo, sizeof(runner_fifo), RUNNER_FIFO, runner_pid);
 
     int fd = open(runner_fifo, O_WRONLY);
     if (fd == -1)
         perror("[controller] failed to open runner FIFO");
     else {
-        write(fd, response, sizeof(Response));
+        if (write(fd, response, sizeof(Response)) < 0) perror("failed to write to runner");
         close(fd);
     }
 }
@@ -52,9 +51,9 @@ void dispatch(State *state) {
         response.allowed = 1;
         send_response(task->request.runner_pid, &response);
 
-        char msg[256];
+        char msg[BUF_LEN];
         snprintf(msg, sizeof(msg), "[controller] approved execute request for command with pid %d\n", task->request.runner_pid);
-        write(STDOUT_FILENO, msg, strlen(msg));
+        (void)write(STDOUT_FILENO, msg, strlen(msg));
     }
 }
 
@@ -101,16 +100,16 @@ void handle_finished(State *state, const Request *request) {
             else stats->priority = HIGH;
 
             // grava a entrada no ficheiro persistente
-            char entry[256];
+            char entry[BUF_LEN];
             snprintf(entry, sizeof(entry), "user_id: %d | pid: %d | duration: %llu ms\n",
                      request->user_id, request->runner_pid, duration_submitted);
 
             char log[64];
             snprintf(log, sizeof(log), "tmp/execution_log_%d.txt", getpid()); // talvez mudar isso para garantirmos unicidade (?)
 
-            int fd = open(log, O_WRONLY | O_CREAT | O_APPEND, 0644);
+            int fd = open(log, O_WRONLY | O_CREAT | O_APPEND, FILE_PERMS);
             if (fd != -1) {
-                write(fd, entry, strlen(entry));
+                if (write(fd, entry, strlen(entry)) < 0) perror("failed to write to persistent log file");
                 close(fd);
             } else
                 perror("[controller] failed to open log file");
@@ -123,9 +122,9 @@ void handle_finished(State *state, const Request *request) {
         }
     }
 
-    char msg[256];
+    char msg[BUF_LEN];
     snprintf(msg, sizeof(msg), "[controller] command with pid %d finished\n", request->runner_pid);
-    write(STDOUT_FILENO, msg, strlen(msg));
+    (void)write(STDOUT_FILENO, msg, strlen(msg));
 
     // acabamos de liberar um espaço; tentamos despachar a proxima tarefa
     dispatch(state);
@@ -136,7 +135,7 @@ void handle_consult(State *state, const Request *request, Response *response) {
 
     response->allowed = true;
     memset(response->status, 0, sizeof(response->status));
-    char buffer[256];
+    char buffer[BUF_LEN];
 
     strcat(response->status, "---\nExecuting\n");
     for (GList *node = state->running->head; node != NULL; node = node->next) {
@@ -166,9 +165,9 @@ void handle_shutdown(State *state, const Request *request, Response *response) {
     state->shutdown_pid = request->runner_pid; // guardamos o pid do usuário para avisarmos ao fim
     response->allowed = true;
 
-    char msg[256];
+    char msg[BUF_LEN];
     snprintf(msg, sizeof(msg), "[controller] shutdown request from %d\n", request->runner_pid);
-    write(STDOUT_FILENO, msg, strlen(msg));
+    (void)write(STDOUT_FILENO, msg, strlen(msg));
 }
 
 // retorna 1 para manter o controller ativo, 0 para terminar
@@ -206,11 +205,20 @@ void handle_request(State *state, const Request *request) {
     if (need_response) send_response(request->runner_pid, &response);
 }
 
+void controller_usage_error() {
+    char msg[BUF_LEN];
+    snprintf(msg, sizeof(msg), "Error. Usage: ./controller <max-parallel-commands> <scheduling-policy>\n"
+                               " <max-parallel-commands> should be an int\n"
+                               " <scheduling-policy>\n"
+                               "  * fcfs - First Come, First Serve\n"
+                               "  * rr   - Round-Robin\n"
+                               "  * mlfq - Multi-Level Feedback Queue\n");
+    (void)write(STDERR_FILENO, msg, strlen(msg));
+    exit(1);
+}
+
 int main(int argc, char *argv[]) {
-    if (argc != 3 || atoi(argv[1]) <= 0) {
-        printerr("Error. Usage: ./controller [parallel-commands] [sched-policy]\n");
-        return 1;
-    }
+    if (argc != 3 || atoi(argv[1]) <= 0) controller_usage_error();
 
     State state;
     state.on = true;
@@ -227,14 +235,11 @@ int main(int argc, char *argv[]) {
     if (strcmp(sched_policy, "fcfs") == 0) state.policy = fcfs;
     else if (strcmp(sched_policy, "rr") == 0) state.policy = rr;
     else if (strcmp(sched_policy, "mlfq") == 0) state.policy = mlfq;
-    else {
-        printerr("Error. Unknown scheduling policy.\n");
-        return 1;
-    }
+    else controller_usage_error();
 
     unlink(CONTROLLER_FIFO); // fechar pipes de execucoes anteriores
 
-    if (mkfifo(CONTROLLER_FIFO, 0666) == -1) {
+    if (mkfifo(CONTROLLER_FIFO, FIFO_PERMS) == -1) {
         perror("[controller] failed to create controller FIFO");
         return 1;
     }

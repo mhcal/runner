@@ -1,5 +1,4 @@
 #include "types.h"
-#include "utils.h"
 #include "parse.h"
 #include <stdio.h>
 #include <unistd.h>
@@ -18,7 +17,7 @@ void notify_finished(const Request *request) {
 
     int fd = open(CONTROLLER_FIFO, O_WRONLY);
     if (fd != -1) {
-        write(fd, &finished, sizeof(Request));
+        if (write(fd, &finished, sizeof(Request)) < 0) perror("failed to write to controller");
         close(fd);
     } else {
         perror("[runner] failed to notify the controller of finished process\n");
@@ -26,45 +25,46 @@ void notify_finished(const Request *request) {
 }
 
 void send_request(const Request *request, Response *response) {
-    char runner_fifo[256];
-    char msg[256];
+    char runner_fifo[BUF_LEN];
+    char msg[BUF_LEN];
 
-    snprintf(runner_fifo, sizeof(runner_fifo), RUNNER_FIFO "_%d", request->runner_pid);
+    snprintf(runner_fifo, sizeof(runner_fifo), RUNNER_FIFO, request->runner_pid);
 
-    if (mkfifo(runner_fifo, 0666) == -1)
+    if (mkfifo(runner_fifo, FIFO_PERMS) == -1)
         perror("[runner] failed to create runner FIFO");
 
     int fd_runner = open(runner_fifo, O_RDWR);
     int fd_controller = open(CONTROLLER_FIFO, O_WRONLY);
 
     if (fd_controller == -1) {
-        printerr("[runner] error: no controller found (is it running?)\n");
+        snprintf(msg, sizeof(msg), "[runner] error: no controller found (is it running?)\n");
+        (void)write(STDOUT_FILENO, msg, strlen(msg));
         unlink(runner_fifo);
         exit(1);
     }
 
-    write(fd_controller, request, sizeof(Request));
+    if (write(fd_controller, request, sizeof(Request)) < 0) perror("failed to write to controller");
     close(fd_controller);
 
     if (request->op == EXECUTE) {
         snprintf(msg, sizeof(msg), "[runner] command %d submitted\n", request->runner_pid);
-        write(STDOUT_FILENO, msg, strlen(msg));
+        (void)write(STDOUT_FILENO, msg, strlen(msg));
     } else if (request->op == SHUTDOWN) {
         snprintf(msg, sizeof(msg), "[runner] sent shutdown notification\n");
-        write(STDOUT_FILENO, msg, strlen(msg));
+        (void)write(STDOUT_FILENO, msg, strlen(msg));
     }
 
     if (fd_runner != -1) {
-        read(fd_runner, response, sizeof(Response));
+        if (read(fd_runner, response, sizeof(Response)) < 0) perror("failed to read from runner FIFO");
 
         if (request->op == SHUTDOWN) {
             // read anterior bloqueia. a mensagem só printa depois da primeira resposta
             snprintf(msg, sizeof(msg), "[runner] waiting for controller to shutdown...\n");
-            write(STDOUT_FILENO, msg, strlen(msg));
+            (void)write(STDOUT_FILENO, msg, strlen(msg));
 
             // próximo read bloqueia a espera da mensagem final
             Response final;
-            read(fd_runner, &final, sizeof(Response));
+            if (read(fd_runner, &final, sizeof(Response)) < 0) perror("failed to read from runner FIFO");
         }
 
         close(fd_runner);
@@ -122,7 +122,7 @@ void execute_pipeline(Pipeline *pipeline) {
 
             if (cmd->out) {
                 int flags = O_WRONLY | O_CREAT | (cmd->append ? O_APPEND : O_TRUNC);
-                int fd_out = open(cmd->out, flags, 0644);
+                int fd_out = open(cmd->out, flags, FILE_PERMS);
                 if (fd_out < 0) {
                     perror("opening output file failed");
                     return;
@@ -133,7 +133,7 @@ void execute_pipeline(Pipeline *pipeline) {
 
             if (cmd->err) {
                 int flags = O_WRONLY | O_CREAT | O_TRUNC;
-                int fd_err = open(cmd->err, flags, 0644);
+                int fd_err = open(cmd->err, flags, FILE_PERMS);
                 if (fd_err < 0) {
                     perror("opening error file failed");
                     return;
@@ -146,7 +146,7 @@ void execute_pipeline(Pipeline *pipeline) {
             execvp(cmd->args[0], cmd->args);
 
             // fallback
-            printerr("Error executing command\n");
+            perror("Error executing command\n");
             exit(1);
         } else {
             // parent
@@ -168,42 +168,45 @@ void execute_pipeline(Pipeline *pipeline) {
 }
 
 void handle_response(const Request *request, const Response *response, Pipeline *pipeline) {
+    char msg[BUF_LEN];
     if (!response->allowed) {
-        printerr("[runner] error: controller has denied the request - ");
-        printerr(response->status);
+        snprintf(msg, sizeof(msg), "[runner] error: controller has denied the request - ");
+        (void)write(STDERR_FILENO, msg, strlen(msg));
+        (void)write(STDERR_FILENO, response->status, strlen(response->status));
         return;
     }
-    char msg[256];
 
     if (request->op == EXECUTE) {
         snprintf(msg, sizeof(msg), "[runner] executing command %d...\n", request->runner_pid);
-        write(STDOUT_FILENO, msg, strlen(msg));
+        (void)write(STDOUT_FILENO, msg, strlen(msg));
 
         execute_pipeline(pipeline);
 
         snprintf(msg, sizeof(msg), "[runner] command %d finished\n", request->runner_pid);
-        write(STDOUT_FILENO, msg, strlen(msg));
+        (void)write(STDOUT_FILENO, msg, strlen(msg));
 
         notify_finished(request);
     }
 
     else if (request->op == CONSULT) {
-        write(STDOUT_FILENO, response->status, strlen(response->status));
+        (void)write(STDOUT_FILENO, response->status, strlen(response->status));
     }
 
     else if (request->op == SHUTDOWN) {
         snprintf(msg, sizeof(msg), "[runner] controller exited.\n");
-        write(STDOUT_FILENO, msg, strlen(msg));
+        (void)write(STDOUT_FILENO, msg, strlen(msg));
     }
 }
 
-void usage_error() {
-    printerr("Error. Usage: ./runner -e [user-id] [command] [args] | -c | -s\n");
+void runner_usage_error() {
+    char msg[BUF_LEN];
+    snprintf(msg, sizeof(msg), "Error. Usage: ./runner -e <user-id> \"<command> <args>\" | -c | -s\n");
+    (void)write(STDERR_FILENO, msg, strlen(msg));
     exit(1);
 }
 
 int main(int argc, char *argv[]) {
-    if (argc < 2 || argv[1][0] != '-') usage_error();
+    if (argc < 2 || argv[1][0] != '-') runner_usage_error();
 
     Request request;
     request.runner_pid = getpid();
@@ -211,20 +214,20 @@ int main(int argc, char *argv[]) {
 
     switch (argv[1][1]) {
         case 'e':
-            if (argc < 4 || !parse_pipeline(argv[3], &pipeline)) usage_error();
+            if (argc < 4 || !parse_pipeline(argv[3], &pipeline)) runner_usage_error();
             request.op = EXECUTE;
             request.user_id = atoi(argv[2]);
             break;
         case 'c':
-            if (argc != 2) usage_error();
+            if (argc != 2) runner_usage_error();
             request.op = CONSULT;
             break;
         case 's':
-            if (argc != 2) usage_error();
+            if (argc != 2) runner_usage_error();
             request.op = SHUTDOWN;
             break;
         default:
-            usage_error();
+            runner_usage_error();
     }
 
     Response response;

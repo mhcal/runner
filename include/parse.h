@@ -6,7 +6,6 @@
 #include <string.h>
 #include <stdbool.h>
 #include "types.h"
-#include "utils.h"
 
 void strip_quotes(char *str);
 char* get_next_token(char **str_ptr);
