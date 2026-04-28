@@ -62,6 +62,10 @@ void handle_execute(State *state, const Request *request) {
     dispatch(state);
 }
 
+unsigned long long timeval_to_ms(struct timeval time) {
+    return (unsigned long long)time.tv_sec * 1000ull + (unsigned long long)time.tv_usec / 1000ull;
+}
+
 void handle_finished(State *state, const Request *request) {
     if (request->op != FINISHED) return;
 
@@ -71,8 +75,23 @@ void handle_finished(State *state, const Request *request) {
         if (task->request.runner_pid == request->runner_pid) {
             gettimeofday(&task->end_time, NULL);
 
-            // TODO: colocar a tarefa terminada no arquivo persistente
-            // possivelmente computar um novo nivel de prioridade para uma tabela de estatisticas de usuario (mlfq)
+            // calcula duração e concatena ao ficheiro persistente
+            unsigned long long duration = timeval_to_ms(task->end_time) - timeval_to_ms(task->submitted_time);
+
+            char entry[256];
+            snprintf(entry, sizeof(entry), "user_id: %d | pid: %d | duration: %llu ms\n",
+                     task->request.user_id, task->request.runner_pid, duration);
+
+            // nome do ficheiro usa o pid do runner (talvez mudar isso para garantir unicidade (?))
+            char log[64];
+            snprintf(log, sizeof(log), "tmp/execution_log_%d.txt", getpid());
+
+            int fd = open(log, O_WRONLY | O_CREAT | O_APPEND, 0644);
+            if (fd != -1) {
+                write(fd, entry, strlen(entry));
+                close(fd);
+            } else
+                perror("[controller] failed to open log file");
 
             // cleanup
             g_queue_delete_link(state->running, node);
