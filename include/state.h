@@ -6,6 +6,10 @@
 #include <sys/time.h>
 #include <stdbool.h>
 
+// baixa (> 30s), média (10-30s), alta (< 10s)
+#define LOW_PRIORITY_THRESHOLD 30000000
+#define MEDIUM_PRIORITY_THRESHOLD 10000000
+
 typedef struct {
     Request request;
     struct timeval submitted_time;
@@ -13,15 +17,28 @@ typedef struct {
     struct timeval end_time;
 } Task;
 
-typedef GList* (*PolicyFunction)(GQueue *pending);
+typedef enum { HIGH = 0, MEDIUM, LOW } Priority;
 
 typedef struct {
+    Priority priority;
+    unsigned long long total_time;
+    unsigned long long last_scheduled;
+} UserStats;
+
+// definimos o tipo separadamente da struct para usar na assinatura da PolicyFunction
+typedef struct State_t State;
+
+typedef GList* (*PolicyFunction)(State *state);
+
+struct State_t {
     bool on;
     int max_parallel;
     int current_running;
     GQueue *pending;
     GQueue *running;
     PolicyFunction policy;
-} State;
+    GHashTable *users;
+    unsigned long long global_time;
+};
 
 #endif

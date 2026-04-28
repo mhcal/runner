@@ -27,7 +27,7 @@ void send_response(pid_t runner_pid, Response *response) {
 void dispatch(State *state) {
     while (state->current_running < state->max_parallel && !g_queue_is_empty(state->pending)) {
         // escolhemos a proxima tarefa usando a politica de escalonamento escolhida
-        GList *node = state->policy(state->pending);
+        GList *node = state->policy(state);
         if (node == NULL) break;
 
         // movemos a tarefa escolhida da fila de pendentes para fila de ativos
@@ -36,6 +36,15 @@ void dispatch(State *state) {
         gettimeofday(&task->start_time, NULL);
         g_queue_push_tail(state->running, task);
         state->current_running++;
+
+        // atualizamos as estatísticas do usuário
+        UserStats *stats = g_hash_table_lookup(state->users, GINT_TO_POINTER(task->request.user_id));
+        if (!stats) {
+            stats = g_malloc0(sizeof(UserStats));
+            g_hash_table_insert(state->users, GINT_TO_POINTER(task->request.user_id), stats);
+        }
+        state->global_time++;
+        stats->last_scheduled = state->global_time;
 
         // notificamos o runner
         Response response;
@@ -75,16 +84,29 @@ void handle_finished(State *state, const Request *request) {
         if (task->request.runner_pid == request->runner_pid) {
             gettimeofday(&task->end_time, NULL);
 
-            // calcula duração e concatena ao ficheiro persistente
-            unsigned long long duration = timeval_to_ms(task->end_time) - timeval_to_ms(task->submitted_time);
+            unsigned long long duration_submitted = timeval_to_ms(task->end_time) - timeval_to_ms(task->submitted_time);
+            unsigned long long duration_start = timeval_to_ms(task->end_time) - timeval_to_ms(task->start_time);
 
+            // computar novo nível de prioridade para o usuário
+            UserStats *stats = g_hash_table_lookup(state->users, GINT_TO_POINTER(request->runner_pid));
+            if (!stats) {
+                stats = g_malloc0(sizeof(UserStats));
+                stats->last_scheduled = state->global_time;
+                g_hash_table_insert(state->users, GINT_TO_POINTER(request->user_id), stats);
+            }
+
+            stats->total_time += duration_start;
+            if (stats->total_time > LOW_PRIORITY_THRESHOLD) stats->priority = LOW;
+            else if (stats->total_time > MEDIUM_PRIORITY_THRESHOLD) stats->priority = MEDIUM;
+            else stats->priority = HIGH;
+
+            // grava a entrada no ficheiro persistente
             char entry[256];
             snprintf(entry, sizeof(entry), "user_id: %d | pid: %d | duration: %llu ms\n",
-                     task->request.user_id, task->request.runner_pid, duration);
+                     request->user_id, request->runner_pid, duration_submitted);
 
-            // nome do ficheiro usa o pid do runner (talvez mudar isso para garantir unicidade (?))
             char log[64];
-            snprintf(log, sizeof(log), "tmp/execution_log_%d.txt", getpid());
+            snprintf(log, sizeof(log), "tmp/execution_log_%d.txt", getpid()); // talvez mudar isso para garantirmos unicidade (?)
 
             int fd = open(log, O_WRONLY | O_CREAT | O_APPEND, 0644);
             if (fd != -1) {
@@ -178,7 +200,7 @@ void handle_request(State *state, const Request *request) {
 }
 
 int main(int argc, char *argv[]) {
-    if (argc != 3) {
+    if (argc != 3 || atoi(argv[1]) <= 0) {
         printerr("Error. Usage: ./controller [parallel-commands] [sched-policy]\n");
         return 1;
     }
@@ -189,11 +211,15 @@ int main(int argc, char *argv[]) {
     state.current_running = 0;
     state.pending = g_queue_new();
     state.running = g_queue_new();
+    state.users = g_hash_table_new_full(g_direct_hash, g_direct_equal, NULL, g_free);
+    state.global_time = 0;
 
     char *sched_policy = argv[2];
-    if (strcmp(sched_policy, "fcfs") == 0) {
-        state.policy = fcfs;
-    } else {
+
+    if (strcmp(sched_policy, "fcfs") == 0) state.policy = fcfs;
+    else if (strcmp(sched_policy, "rr") == 0) state.policy = rr;
+    else if (strcmp(sched_policy, "mlfq") == 0) state.policy = mlfq;
+    else {
         printerr("Error. Unknown scheduling policy.\n");
         return 1;
     }
@@ -239,6 +265,7 @@ int main(int argc, char *argv[]) {
     unlink(CONTROLLER_FIFO);
     g_queue_free_full(state.pending, g_free);
     g_queue_free_full(state.running, g_free);
+    g_hash_table_destroy(state.users);
 
     return 0;
 }
