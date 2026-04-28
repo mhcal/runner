@@ -13,7 +13,7 @@ typedef struct {
     struct timeval end_time;
 } Task;
 
-typedef GList* (*PolicyFunction)(GQueue *pending);
+typedef GList* (*PolicyFunction)(gpointer arg);
 
 typedef struct {
     bool on;
@@ -21,6 +21,8 @@ typedef struct {
     int current_running;
     GQueue *pending;
     GQueue *running;
+    GHashTable *user_hash_table;
+    GTree *policy_tree;
     PolicyFunction policy;
 } State;
 

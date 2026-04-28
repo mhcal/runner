@@ -36,4 +36,9 @@ typedef struct {
     char status[1024];
 } Response;
 
+typedef struct {
+    struct timeval total_time;
+    int finished_processes;
+} UserStats;
+
 #endif

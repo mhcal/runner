@@ -4,6 +4,12 @@
 #include "state.h"
 #include <glib.h>
 
-GList* fcfs(GQueue *pending);
+static gint find_task_by_id(gconstpointer target, gconstpointer id) {
+    const Task *task = (const Task*)target;
+    return task->request.user_id - *(int *)id;
+}
+
+GList* fcfs(gpointer arg);
+GList* rr(gpointer arg);
 
 #endif

@@ -37,6 +37,15 @@ void dispatch(State *state) {
         g_queue_push_tail(state->running, task);
         state->current_running++;
 
+        // inicializa-se a struct de estatísticas de usuário e insere na hash table
+        UserStats *stats = g_new0(UserStats, 1);
+        
+        if (g_hash_table_contains(state->user_hash_table, &task->request.user_id) == FALSE) {
+            g_hash_table_insert(state->user_hash_table, &task->request.user_id, stats);
+        } else {
+            g_free(stats);
+        }
+
         // notificamos o runner
         Response response;
         memset(&response, 0, sizeof(Response));
@@ -72,8 +81,17 @@ void handle_finished(State *state, const Request *request) {
             gettimeofday(&task->end_time, NULL);
 
             // TODO: colocar a tarefa terminada no arquivo persistente
-            // possivelmente computar um novo nivel de prioridade para uma tabela de estatisticas de usuario (mlfq)
+            // possivelmente computar um novo nivel de prioridade para uma tabela de estatisticas de usuario (mlfq);
+            UserStats *stats = g_hash_table_lookup(state->user_hash_table, &task->request.user_id);
+            struct timeval res;
+            timersub(&task->end_time, &task->start_time, &res);
+            stats->finished_processes++;
 
+            timeradd(&stats->total_time, &res, &stats->total_time);
+
+            if (state->policy == rr) {
+                g_tree_insert_node(state->policy_tree, &stats->finished_processes, &task->request.user_id);
+            }
             // cleanup
             g_queue_delete_link(state->running, node);
             g_free(task);
@@ -170,10 +188,15 @@ int main(int argc, char *argv[]) {
     state.current_running = 0;
     state.pending = g_queue_new();
     state.running = g_queue_new();
+    state.user_hash_table = g_hash_table_new_full(g_int_hash, g_int_equal, g_free, g_free);
+    state.policy_tree = NULL;
 
     char *sched_policy = argv[2];
     if (strcmp(sched_policy, "fcfs") == 0) {
-        state.policy = fcfs;
+        state.policy = (PolicyFunction)fcfs;
+    } else if (strcmp(sched_policy, "rr") == 0) {
+        state.policy = (PolicyFunction)rr;
+        state.policy_tree = g_tree_new(g_int_equal);
     } else {
         printerr("Error. Unknown scheduling policy.\n");
         return 1;
@@ -220,6 +243,8 @@ int main(int argc, char *argv[]) {
     unlink(CONTROLLER_FIFO);
     g_queue_free_full(state.pending, g_free);
     g_queue_free_full(state.running, g_free);
-
+    g_hash_table_destroy(state.user_hash_table);
+    // TODO: dar free na árvore da politica
+    g_tree_destroy(state.policy_tree);
     return 0;
 }
