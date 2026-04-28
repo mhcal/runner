@@ -8,7 +8,7 @@ folders:
 	@mkdir -p src include obj bin tmp
 bin/controller: obj/controller.o obj/policies.o
 	$(CC) $(LDFLAGS) $^ -o $@
-bin/runner: obj/runner.o
+bin/runner: obj/runner.o obj/parse.o
 	$(CC) $(LDFLAGS) $^ -o $@
 obj/%.o: src/%.c
 	$(CC) $(CFLAGS) -c $< -o $@

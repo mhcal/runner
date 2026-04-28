@@ -12,7 +12,7 @@
 #include <glib.h>
 
 void send_response(pid_t runner_pid, Response *response) {
-    char runner_fifo[CMD_LEN];
+    char runner_fifo[256];
     snprintf(runner_fifo, sizeof(runner_fifo), RUNNER_FIFO "_%d", runner_pid);
 
     int fd = open(runner_fifo, O_WRONLY);

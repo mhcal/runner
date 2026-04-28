@@ -4,17 +4,31 @@
 #include <sys/types.h>
 #include <stdbool.h>
 
-#define CMD_LEN 256
+#define MAX_CMDS 16
+#define MAX_ARGS 64
+
 #define CONTROLLER_FIFO "/tmp/controller_fifo"
 #define RUNNER_FIFO "/tmp/runner_fifo"
 
 typedef enum { EXECUTE, CONSULT, SHUTDOWN, FINISHED } Operation;
 
 typedef struct {
+    char *args[MAX_ARGS];
+    char *in;
+    char *out;
+    char *err;
+    bool append;
+} Command;
+
+typedef struct {
+    Command cmd[MAX_CMDS];
+    int num_cmds;
+} Pipeline;
+
+typedef struct {
     Operation op;
     int user_id;
     pid_t runner_pid;
-    char cmd[CMD_LEN];
 } Request;
 
 typedef struct {
