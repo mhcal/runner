@@ -39,6 +39,7 @@ struct State_t {
     PolicyFunction policy;
     GHashTable *users;
     unsigned long long global_time;
+    pid_t shutdown_pid;
 };
 
 #endif

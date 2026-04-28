@@ -156,11 +156,18 @@ void handle_consult(State *state, const Request *request, Response *response) {
 void handle_shutdown(State *state, const Request *request, Response *response) {
     if (request->op != SHUTDOWN) return;
 
+    if (!state->on || state->shutdown_pid > 0) {
+        response->allowed = false;
+        snprintf(response->status, sizeof(response->status), "Shutdown already in progress\n");
+        return;
+    }
+
     state->on = false;
+    state->shutdown_pid = request->runner_pid; // guardamos o pid do usuário para avisarmos ao fim
     response->allowed = true;
 
     char msg[256];
-    snprintf(msg, sizeof(msg), "[controller] shutdown request from %d approved\n", request->runner_pid);
+    snprintf(msg, sizeof(msg), "[controller] shutdown request from %d\n", request->runner_pid);
     write(STDOUT_FILENO, msg, strlen(msg));
 }
 
@@ -213,6 +220,7 @@ int main(int argc, char *argv[]) {
     state.running = g_queue_new();
     state.users = g_hash_table_new_full(g_direct_hash, g_direct_equal, NULL, g_free);
     state.global_time = 0;
+    state.shutdown_pid = 0;
 
     char *sched_policy = argv[2];
 
@@ -258,6 +266,14 @@ int main(int argc, char *argv[]) {
         }
 
         else perror("[controller] error reading from FIFO;");
+    }
+
+    // avisar o controller que pediu o shutdown
+    if (state.shutdown_pid > 0) {
+        Response bye;
+        memset(&bye, 0, sizeof(Response));
+        bye.allowed = true;
+        send_response(state.shutdown_pid, &bye);
     }
 
     // cleanup

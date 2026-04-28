@@ -56,6 +56,17 @@ void send_request(const Request *request, Response *response) {
 
     if (fd_runner != -1) {
         read(fd_runner, response, sizeof(Response));
+
+        if (request->op == SHUTDOWN) {
+            // read anterior bloqueia. a mensagem só printa depois da primeira resposta
+            snprintf(msg, sizeof(msg), "[runner] waiting for controller to shutdown...\n");
+            write(STDOUT_FILENO, msg, strlen(msg));
+
+            // próximo read bloqueia a espera da mensagem final
+            Response final;
+            read(fd_runner, &final, sizeof(Response));
+        }
+
         close(fd_runner);
     } else
         perror("[runner] failed to open runner FIFO");
@@ -162,9 +173,9 @@ void handle_response(const Request *request, const Response *response, Pipeline 
         printerr(response->status);
         return;
     }
+    char msg[256];
 
     if (request->op == EXECUTE) {
-        char msg[256];
         snprintf(msg, sizeof(msg), "[runner] executing command %d...\n", request->runner_pid);
         write(STDOUT_FILENO, msg, strlen(msg));
 
@@ -178,6 +189,11 @@ void handle_response(const Request *request, const Response *response, Pipeline 
 
     else if (request->op == CONSULT) {
         write(STDOUT_FILENO, response->status, strlen(response->status));
+    }
+
+    else if (request->op == SHUTDOWN) {
+        snprintf(msg, sizeof(msg), "[runner] controller exited.\n");
+        write(STDOUT_FILENO, msg, strlen(msg));
     }
 }
 

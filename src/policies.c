@@ -43,7 +43,7 @@ GList* mlfq(State *state) {
         if (curr < best) {
             best = curr;
             pick = node;
-            if (best == HIGH) break;
+            if (best == HIGH) break; // desempate por ordem de chegada
         }
     }
 
