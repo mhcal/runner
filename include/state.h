@@ -7,8 +7,8 @@
 #include <stdbool.h>
 
 // baixa (> 30s), média (10-30s), alta (< 10s)
-#define LOW_PRIORITY_THRESHOLD 30000000
-#define MEDIUM_PRIORITY_THRESHOLD 10000000
+#define LOW_PRIORITY_THRESHOLD 30000ULL
+#define MEDIUM_PRIORITY_THRESHOLD 10000ULL
 
 typedef struct {
     Request request;
