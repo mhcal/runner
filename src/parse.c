@@ -79,7 +79,7 @@ bool parse_command(char *str, Command *cmd) {
             strip_quotes(cmd->out);
         } else if (strcmp(token, "2>") == 0) {
             cmd->err = get_next_token(&str);
-            if (!cmd->out) {
+            if (!cmd->err) {
                 snprintf(msg, sizeof(msg), "Syntax error: missing output file for '2>'.\n");
                 (void)write(STDERR_FILENO, msg, strlen(msg));
                 return false;
