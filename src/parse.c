@@ -6,11 +6,12 @@
 #include "types.h"
 
 void strip_quotes(char *str) {
-    if (strlen(str) < 2) return;
+    int len = strlen(str);
+    if (len < 2) return;
 
-    if (str[0] == '\"' && str[strlen(str) - 1] == '\"') {
-        memmove(str, str + 1, strlen(str) - 2);
-        str[strlen(str) - 2] = '\0';
+    if (str[0] == '\"' && str[len - 1] == '\"') {
+        memmove(str, str + 1, len - 2);
+        str[len - 2] = '\0';
     }
 }
 
